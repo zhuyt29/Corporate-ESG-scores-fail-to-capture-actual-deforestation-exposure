@@ -1,441 +1,435 @@
-#Corporate ESG scores fail to capture actual deforestation exposure#
-
-#The MSCI and Sustainalytics datasets were organized and merged with TRASE deforestation dataset before the analysis below
-
-library(ggplot2)
+#Load the R package
 library(dplyr)
 library(tidyr)
-
-#Include market capitalisation in the dataset
-#market capitalisation was avergaed by month in each year for each company
-market_capital_0<- read.csv("eikon_mcap_yingtong.csv")
-
-market_capital_0$year <- substr(market_capital_0$Date, 1, 4)
-market_capital_0$month <- substr(market_capital_0$Date, 6, 7)
-market_capital_0$date <- substr(market_capital_0$Date, 9, 10)
-
-colnames(market_capital_0)[1]<- "Issuer_ISIN" 
-colnames(market_capital_0)[3]<- "Market_Capital"
-colnames(market_capital_0)[4]<- "MC_year"
-colnames(market_capital_0)[5]<- "MC_month"
-colnames(market_capital_0)[6]<- "MC_date"
-
-MSCI$Rating_year<- substr(MSCI$Rating_Date, 1, 4)
-MSCI$Rating_month<- substr(MSCI$Rating_Date, 5, 6)
-MSCI$Rating_date<- substr(MSCI$Rating_Date, 7, 8)
-
-MSCI_0<- MSCI %>% left_join(market_capital_0, by = c("Issuer_ISIN" = "Issuer_ISIN", "Rating_year" = "MC_year", "Rating_month" = "MC_month"))
-#Similar process was appied to Sustainalytics
-
-#Morgan Stanley Capital International (MSCI)============================================
-#ESG scores are:Industry-Adjusted Score (IAS), Weighted Average Key Issue Score (WAKIS), Environmental Pillar score (E score), Social Pillar Score (S score), Governance Pillar Score (G score)
-
-MSCI_0<- read.csv("E:/PhD Research/Chapter 2 - Reanalysis/MSCI data 2/MSCI_TRASE_same year (rating year).csv")
-length(unique(MSCI_0$Common_Name))  #202 companies initially
-
-#Exluded companies missing market capitalisation
-MSCI1.1<- MSCI_0[!(is.na(MSCI_0$Market_Capital)),]
-
-#market capitalisation in the unit of billion
-MSCI1.1$Market_Capital_B<- MSCI1.1$Market_Capital/(10^9)
-length(unique(MSCI1.1$Common_Name)) #154
-
-#Deforestation exposure in thousands
-MSCI1.1$DF_E<- MSCI1.1$DF_E/1000
-MSCI1.1<- MSCI1.1 %>% rename(Deforestation = DF_E) %>% rename(Market_Capitalisation = Market_Capital_B)
-
-#The dataset MSCI1.1 had a sample size of 520 firm-years, including 154 unique companies from 37 industries
-
-#LMM Models
+require(usdm)
 require(lme4)  
 require(lmtest)
 require(lmerTest)
-
-lmer_model2 <- function(data, response, market_cap) {
-  
-  model_formula <- as.formula(paste0("scale(",response, ") ~  scale(Market_Capitalisation)*scale(Deforestation) + scale(Deforestation)*Commodity + (1|Rating_year) + (1|Common_Name)+ (1|Industry)"))
-  model <- lmer(model_formula, data = data)
-  
-  return(model)
-}
-
-IAS_cap.con1<- lmer_model2(MSCI1.1, "Industry_Adjusted_Score")
-WAS_cap.con1<- lmer_model2(MSCI1.1, "Weighted_Average_Score") 
-E_cap.con1<- lmer_model2(MSCI1.1, "E_score")
-S_cap.con1<- lmer_model2(MSCI1.1, "S_score")
-G_cap.con1<-  lmer(scale(G_score) ~  scale(Market_Capitalisation)*scale(Deforestation) + scale(Deforestation)*Commodity + (1|Rating_year) + (1|Common_Name), data = MSCI1.1)
-
-#Interaction plot
 library(visreg)
-visreg(G_cap.con1, "Deforestation", by="Market_Capitalisation", breaks=3)
-visreg(G_cap.con1, "Deforestation", by="Commodity", overlay=TRUE)
-#also applied to other responses variables to create Interaction plots
+require(ggplot2)
+require(MASS)
+library(DHARMa)
+library(performance)
+library(MuMIn)
+library(marginaleffects)
 
 
-extract_coefficients <- function(model, response, market_cap) {
-  coef_summary <- summary(model)$coefficients
-  coef_df <- data.frame(
-    term = rownames(coef_summary),
-    estimate = coef_summary[, "Estimate"],
-    std_Error= coef_summary[, "Std. Error"],
-    p_value = coef_summary[, "Pr(>|t|)"],
-    response = response,
-    market_cap = market_cap
-  )
-  return(coef_df)
-}
+setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Consolidated data/Overall Analyst View")
+DEview_news_financial<- read.csv("All_matched_company_info_DE_view_merge news_financial.csv")
 
-# Define the function
-create_coefficient_plot <- function(model, response_var, method_name) {
-  # Extract coefficients
-  coef_data <- extract_coefficients(model, response_var, method_name)
-  coef_data <- data.frame(coef_data)
+DEview_news_financial$DEView_binary<- ifelse(DEview_news_financial$Deforestation_statement %in% c("negative","positive"),1,0)
+
+DEview_news_financial$Common_Name<- as.factor(DEview_news_financial$Common_Nam)
+DEview_news_financial$Country<- as.factor(DEview_news_financial$Country)
+DEview_news_financial$Sector<- as.factor(DEview_news_financial$Sector)
+
+# Create a dataframe with just the explanatory variables
+explanatory_vars <- DEview_news_financial[, c("mean_news_count", "mean_DF_E", 
+                                              "assets", "sales", "book_equity",
+                                              "net_income", "enterprise_value", "ni_be",
+                                              "ope_be", "debt_bev", "cash_lt",
+                                              "lt_ppen", "debt_at", "age","me")]
+
+require(usdm)
+usdm::vif(explanatory_vars)
+
+#exclude variable interatively
+explanatory_vars <- DEview_news_financial[, c("mean_news_count", "mean_DF_E", 
+                                              "assets", "sales", "ni_be", "debt_bev", "cash_lt", "age")]
+
+glmm_model1 <- glmer(DEView_binary ~ mean_news_count + mean_DF_E +
+                       # standardized control variables
+                       assets + sales + ni_be + # replace with actual names
+                       debt_bev + cash_lt + age +
+                       (1|Country) + (1|Sector),
+                     family = binomial(link = "logit"),
+                     control = glmerControl(optimizer = "bobyqa", 
+                                            optCtrl = list(maxfun = 100000)),
+                     data = DEview_news_financial3)
+
+sim_residuals <- simulateResiduals(glmm_model1)
+plot(sim_residuals)
+
+# Check for zero-inflation
+testZeroInflation(sim_residuals)
+
+# Check for dispersion
+testDispersion(sim_residuals)
+
+# Check for outliers
+testOutliers(sim_residuals)
+
+#Effects of deforestation exposure and deforestation-related news on ESG scores=============================
+
+#MSCI----------------------------
+setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Consolidated data/EX_IM merge_merge JKP financial updated")
+MSCI_TRASE<- read.csv("MSCI_TRASE4_news.csv")
+names(MSCI_TRASE)
+
+MSCI_TRASE2 <- dplyr::select(MSCI_TRASE, -Issuer_Name, -Issuer_ISIN, -Industry, -Mark.Cap_type,-Rating_month, -Market_Capital)
+
+#Check multilinearity
+explanatory_vars <- MSCI_TRASE2[, c( "News_count","DF_E", "assets", "sales", "book_equity","net_income", "enterprise_value", "ni_be", "ope_be", "debt_bev", "cash_lt","lt_ppen", "debt_at", "age","me")]
+
+vif(explanatory_vars)
+
+#interatively to get the variables below
+explanatory_vars <- MSCI_TRASE2[, c( "News_count","DF_E", "sales", "ni_be", "ope_be", "debt_bev", "cash_lt","lt_ppen", "age")] #all below 3
+
+#Z Standardise the continuous variables
+MSCI_TRASE4<- MSCI_TRASE2 %>% mutate(across(c(19,22:36), 
+                                            ~ as.numeric(scale(.x)), 
+                                            .names = "{.col}"))
+
+MSCI_TRASE5<- MSCI_TRASE4[MSCI_TRASE4$Sector == "Consumer Staples",]  # repeat the analysis for this dataset
+
+analyze_lmm <- function(model) {
+  # Output objects for interactive use
+  model_summary <- summary(model)
+  residual_plot <- plot(model)
+  qq_plot <- qqmath(model, lty = 2)
+  visreg_plot <- visreg(model, "DF_E", by = "Commodity", overlay = TRUE)
+  r2_results <- r2_nakagawa(model) #conditional and marginal R²
+  icc_result <- icc(model)
+  vc <- VarCorr(model)
   
-  # Add additional columns
-  coef_data$model <- paste0(coef_data$response)
-  coef_data$significance <- ifelse(coef_data$p_value < 0.05, "significant", "not significant")
-  
-  coef_data <- coef_data %>%
-    mutate(p_value_category = case_when(
-      p_value >= 0.05 ~ "p >= 0.05",
-      p_value < 0.05 ~ "p < 0.05"
-    ))
-  
-  coef_data$direction <- ifelse(coef_data$estimate > 0, "positive", "negative")
-  
-  # Convert columns to factors
-  coef_data$p_value_category <- as.factor(coef_data$p_value_category)
-  coef_data$significance <- as.factor(coef_data$significance)
-  coef_data$direction <- as.factor(coef_data$direction)
-  
-  # Define the levels for the term factor
-  coef_data$term <- factor(coef_data$term, levels = c(
-    "scale(DF_E):Commoditywood pulp", "scale(DF_E):Commoditysoy", 
-    "scale(DF_E):Commoditypalm oil", "scale(DF_E):Commoditypork", 
-    "scale(DF_E):Commoditychicken", "scale(Market_Capital_B):scale(DF_E)", 
-    "Commoditywood pulp", "Commoditysoy", "Commoditypalm oil", 
-    "Commoditypork", "Commoditychicken", "scale(DF_E)", 
-    "scale(Market_Capital_B)", "(Intercept)"
+  # Return all components as a list
+  return(list(
+    summary = model_summary,
+    residual_plot = residual_plot,
+    qq_plot = qq_plot,
+    visreg = visreg_plot,
+    r2 = r2_results,
+    icc = icc_result,
+    varcorr = vc
   ))
-  
-  # Create the plot
-  plot <- ggplot(coef_data, aes(x = estimate, y = term, color = direction)) +
-    geom_point(aes(shape = p_value_category), size = 3) +
-    geom_errorbarh(aes(xmin = estimate - std_Error, xmax = estimate + std_Error, 
-                       linetype = p_value_category), height = 0.2) +
-    theme_classic() +
-    xlab("Coefficient estimates") +
-    ylab("") +
-    scale_color_manual(values = c("positive" = "#CC3333", "negative" = "#3366CC")) +
-    scale_shape_manual(values = c(16, 1)) +
-    scale_linetype_manual(values = c("p < 0.05" = 1, "p >= 0.05" = 3)) +
-    guides(
-      colour = guide_legend("Direction"),
-      linetype = guide_legend("p-value category"),
-      shape = guide_legend("p-value category")
-    ) + 
-    geom_vline(xintercept = 0, colour = "grey90", linetype = 1, size = 0.5) +
-    theme(
-      axis.text.y = element_text(size = 12),
-      plot.title = element_text(face = "bold"),
-      legend.position = "bottom",
-      legend.justification = c(1, 1),
-      legend.background = element_rect(colour = "grey80")
-    )
-  
-  return(plot)
 }
 
-plot_WAS1 <- create_coefficient_plot(WAS_cap.con1, "Weighted_Average_Score", "MSCI")
-plot_IAS1 <- create_coefficient_plot(IAS_cap.con1, "Industry_Adjusted_Score", "MSCI")
-plot_E <- create_coefficient_plot(E_cap.con1, "E_score", "MSCI")
-plot_S <- create_coefficient_plot(S_cap.con1, "S_score", "MSCI")
-plot_G <- create_coefficient_plot(G_cap.con1, "G_score", "MSCI")
+#Industry_Adjusted_Score (IAS)
+lmm_model1 <- lmer(Industry_Adjusted_Score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
+                     sales + ni_be + ope_be + debt_bev+ cash_lt + lt_ppen + age +
+                     (1|Sector),data = MSCI_TRASE4)
+summary(lmm_model1)
+
+analyze_lmm(lmm_model1)
+
+avg_slopes(lmm_model1,
+           variables = "DF_E",
+           by = "Commodity")
+
+#Weighted Average Key Issue Score (WAKIS)
+lmm_model2 <- lmer(Weighted_Average_Score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
+                     sales  + ni_be + ope_be + debt_bev+ cash_lt + lt_ppen + age +
+                     (1|Sector),data = MSCI_TRASE4)
+summary(lmm_model2)
+
+#E score
+lmm_model3 <- lmer(E_score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
+                     sales  + ni_be + ope_be + debt_bev+ cash_lt + lt_ppen + age +
+                     (1|Sector),data = MSCI_TRASE4)
+summary(lmm_model3)
+
+#S score
+lmm_model4 <- lmer(S_score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
+                     sales   + ni_be + ope_be + debt_bev+ cash_lt + lt_ppen + age +
+                     (1|Sector),data = MSCI_TRASE4)
+summary(lmm_model4)
+
+#G score
+lmm_model5 <- lmer(G_score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
+                     sales + ni_be + ope_be + debt_bev+ cash_lt + lt_ppen + age +
+                     (1|Rating_year),data = MSCI_TRASE4)
+summary(lmm_model5)
+
+setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Analysis/Full Model - Effects of deforestation on ESG scores/MSCI")
+saveRDS(lmm_model1, "IAS score - DE + news + financial_2013-2020.rds")
+saveRDS(lmm_model2, "WAKIS score - DE + news + financial_2013-2020.rds")
+saveRDS(lmm_model3, "E score - DE + news + financial_2013-2020.rds")
+saveRDS(lmm_model4, "S score - DE + news + financial_2013-2020.rds")
+saveRDS(lmm_model5, "G score - DE + news + financial_2013-2020.rds")
+
+#Sustainalytics---------------------------------
+setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Consolidated data/EX_IM merge_merge JKP financial updated")
+Sustain_TRASE<- read.csv("Sustain_TRASE4_news.csv")
 
 
-#Figure 1
-extract_coefficients <- function(model, response, market_cap) {
-  coef_summary <- summary(model)$coefficients
-  coef_df <- data.frame(
-    term = rownames(coef_summary),
-    estimate = coef_summary[, "Estimate"],
-    std_Error= coef_summary[, "Std. Error"],
-    p_value = coef_summary[, "Pr(>|t|)"],
-    response = response,
-    market_cap = market_cap
-  )
-  return(coef_df)
+Sustain_TRASE2 <- dplyr::select(Sustain_TRASE, -Entity_ID, -Entity_name,-Month_Sustain, -Issuer_ISIN, -Region,-Industry, -Market_Capital,-MC_type)
+
+#Check multilinearity
+explanatory_vars <- Sustain_TRASE2[, c( "News_count","DF_E", "assets", "sales", "book_equity","net_income", "enterprise_value", "ni_be", "ope_be", "debt_bev", "cash_lt","lt_ppen", "debt_at", "age","me")]
+
+vif(explanatory_vars)
+
+#The updated one
+explanatory_vars <- Sustain_TRASE2[, c( "News_count","DF_E", "assets", "sales", "ni_be", "ope_be", "cash_lt", "debt_at", "age","me")]
+
+Sustain_TRASE4<- Sustain_TRASE2 %>%   mutate(across(c(19,22:36), 
+                                                    ~ as.numeric(scale(.x)), 
+                                                    .names = "{.col}"))
+
+#Unmanged risk score
+lmm_model6 <- lmer(ESG_risk~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
+                       assets+ sales + ni_be + ope_be + cash_lt + debt_at+ age + me+
+                       (1|Sector)+(1|Country_trade),data = Sustain_TRASE4)
+summary(lmm_model6)
+
+
+shapiro.test(Sustain_TRASE4$Managed_Risk) #Not normal
+Sustain_TRASE4$sqrt_Managed_Risk<- sqrt(Sustain_TRASE4$Managed_Risk)
+shapiro.test(Sustain_TRASE4$sqrt_Managed_Risk)
+
+#Manged risk score
+lmm_model7 <- lmer(sqrt_Managed_Risk~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
+                       assets+ sales + ni_be + ope_be + cash_lt + debt_at+ age + me+
+                       (1|Sector),data = Sustain_TRASE4)
+summary(lmm_model7)
+
+#Overall risk exposure
+lmm_model8 <- lmer(Overall_Exposure~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
+                       assets+ sales + ni_be + ope_be + cash_lt + debt_at+ age + me+
+                       (1|Sector),data = Sustain_TRASE4)
+summary(lmm_model8)
+
+setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Analysis/Full Model - Effects of deforestation on ESG scores/Full model_updated with ADM and me")
+saveRDS(lmm_model6, "Unmanaged risk - DE + news + financial_2013-2020.rds")
+saveRDS(lmm_model7, "Managed risk - DE + news + financial_2013-2020.rds")
+saveRDS(lmm_model8, "Risk exposure - DE + news + financial_2013-2020.rds")
+
+#Refinitiv-----------------------------
+setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Consolidated data/EX_IM merge_merge JKP financial updated")
+Refinitiv_TRASE<- read.csv("Refinitiv_TRASE4_news.csv")
+Refinitiv_TRASE2 <- dplyr::select(Refinitiv_TRASE, -Company_name, -Issuer_ISIN,-Industry)
+
+explanatory_vars <- Refinitiv_TRASE2[, c( "News_count","DF_E", "assets", "sales", "book_equity","net_income", "enterprise_value", "ni_be", "ope_be", "debt_bev", "cash_lt","lt_ppen", "debt_at", "age","me")]
+
+vif(explanatory_vars)
+
+explanatory_vars <- Refinitiv_TRASE2[, c( "News_count","DF_E", "sales","net_income", "ni_be", "ope_be", "debt_bev", "cash_lt","lt_ppen", "debt_at", "age")]  # all below 3, updated
+
+Refinitiv_TRASE4<- Refinitiv_TRASE2 %>%   mutate(across(c(9, 18:32), 
+                                                        ~ as.numeric(scale(.x)), 
+                                                        .names = "{.col}"))
+
+#ESGC score
+lmm_model9 <- lmer(ESGC_score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
+                       sales + net_income+ni_be+ope_be+debt_bev+cash_lt+lt_ppen+debt_at+age+
+                       (1|Sector),data = Refinitiv_TRASE4)
+summary(lmm_model9)
+
+#ESG score
+lmm_model10 <- lmer(ESG_score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
+                       sales + net_income+ni_be+ope_be+debt_bev+cash_lt+lt_ppen+debt_at+age+
+                       (1|Sector),data = Refinitiv_TRASE4)
+summary(lmm_model10)
+
+#E score
+lmm_model11<- lmer(E_score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
+                       sales + net_income+ni_be+ope_be+debt_bev+cash_lt+lt_ppen+debt_at+age+
+                       (1|Sector),data = Refinitiv_TRASE4)
+summary(lmm_model11)
+
+#S score
+lmm_model12 <- lmer(S_score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
+                       sales + net_income+ni_be+ope_be+debt_bev+cash_lt+lt_ppen+debt_at+age+
+                       (1|Sector),data = Refinitiv_TRASE4)
+summary(lmm_mode12)
+
+#G score
+lmm_model13 <- lmer(G_score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
+                       sales + net_income+ni_be+ope_be+debt_bev+cash_lt+lt_ppen+debt_at+age+
+                       (1|Sector),data = Refinitiv_TRASE4)
+summary(lmm_model13)
+
+setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Analysis/Full Model - Effects of deforestation on ESG scores/Full model_updated with ADM and me")
+saveRDS(lmm_model9, "Refinitiv_ESGC score - DE + news + financial_2013-2020.rds")
+saveRDS(lmm_model10, "Refinitiv_ESG score - DE + news + financial_2013-2020.rds")
+saveRDS(lmm_model11, "Refinitiv_E score - DE + news + financial_2013-2020.rds")
+saveRDS(lmm_model12, "Refinitiv_S score - DE + news + financial_2013-2020.rds")
+saveRDS(lmm_model13, "Refinitiv_G score - DE + news + financial_2013-2020.rds")
+
+
+#S&P global---------------------
+setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Consolidated data/EX_IM merge_merge JKP financial updated")
+SP_TRASE<- read.csv("SP_TRASE4_news.csv")
+
+explanatory_vars <- SP_TRASE2[, c( "News_count","DF_E", "assets", "sales", "book_equity","net_income", "enterprise_value", "ni_be", "ope_be", "debt_bev", "cash_lt","lt_ppen", "debt_at", "age","me")]
+
+vif(explanatory_vars)
+
+explanatory_vars <- SP_TRASE2[, c( "News_count","DF_E", "sales","net_income", "ni_be", "ope_be", "debt_bev", "cash_lt","lt_ppen", "debt_at", "age")] # all below 3
+
+SP_TRASE4<- SP_TRASE2 %>%   mutate(across(c(13,16:30), 
+                                          ~ as.numeric(scale(.x)), 
+                                          .names = "{.col}"))
+
+shapiro.test(SP_TRASE4$ESG_score) 
+SP_TRASE4$sqrt_ESG_score<- sqrt(SP_TRASE4$ESG_score)
+lmm_model14<- lmer(sqrt_ESG_score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
+                     sales + net_income+ ni_be + ope_be + debt_bev+ cash_lt + lt_ppen + debt_at+ age +
+                     (1|Sector),data = SP_TRASE4)
+summary(lmm_model14)
+
+shapiro.test(SP_TRASE4$E_score) 
+SP_TRASE4$sqrt_E_score<- sqrt(SP_TRASE4$E_score)
+lmm_model115 <- lmer(sqrt_E_score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
+                     sales + net_income+ ni_be + ope_be + debt_bev+ cash_lt + lt_ppen + debt_at+ age +
+                     (1|Sector),data = SP_TRASE4)
+summary(lmm_model15)
+
+shapiro.test(SP_TRASE4$S_score) 
+SP_TRASE4$sqrt_S_score<- sqrt(SP_TRASE4$S_score)
+lmm_model16 <- lmer(sqrt_S_score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
+                     sales + net_income+ ni_be + ope_be + debt_bev+ cash_lt + lt_ppen + debt_at+ age +
+                     (1|Sector),data = SP_TRASE4)
+summary(lmm_model16)
+
+
+shapiro.test(SP_TRASE4$G_score) 
+SP_TRASE4$sqrt_G_score<- sqrt(SP_TRASE4$G_score)
+lmm_model17<- lmer(sqrt_G_score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
+                     sales + net_income+ ni_be + ope_be + debt_bev+ cash_lt + lt_ppen + debt_at+ age +
+                     (1|Sector),data = SP_TRASE4)
+summary(lmm_model17)
+
+
+setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Analysis/Full Model - Effects of deforestation on ESG scores/Full model_updated with ADM and me")
+saveRDS(lmm_model14, "SP_ESG score - DE + news + financial_2013-2020.rds")
+saveRDS(lmm_model15, "SP_E score - DE + news + financial_2013-2020.rds")
+saveRDS(lmm_model16, "SP_S score - DE + news + financial_2013-2020.rds")
+saveRDS(lmm_model17, "SP_G score - DE + news + financial_2013-2020.rds")
+
+#CDP--------------------------------
+setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Consolidated data/EX_IM merge_merge JKP financial updated")
+CDP_TRASE<- read.csv("CDP_TRASE4_news.csv")
+
+CDP_TRASE2 <- dplyr::select(CDP_TRASE, -Organisation.name, -Issuer_ISIN,-Ticker,-Primary.activity,-Primary.sector, -Primary.industry)
+
+#Check multilinearity
+explanatory_vars <- CDP_TRASE2[, c( "News_count","DF_E", "assets", "sales", "book_equity","net_income", "enterprise_value", "ni_be", "ope_be", "debt_bev", "cash_lt","lt_ppen", "debt_at", "age","me")]
+
+vif(explanatory_vars)
+
+explanatory_vars <- CDP_TRASE2[, c( "News_count","DF_E", "sales","net_income", "ni_be", "ope_be", "debt_bev", "cash_lt","lt_ppen", "age")] # all below 3
+
+CDP_TRASE4<- CDP_TRASE2 %>%   mutate(across(c(11,14:28), 
+                                            ~ as.numeric(scale(.x)), 
+                                            .names = "{.col}"))
+CDP_TRASE4$Score <- factor(
+  CDP_TRASE4$Score,
+  levels = c("E" ,"D-", "D","C", "B-", "B", "A-","A"),
+  ordered = TRUE
+)
+
+mod <- polr(Score~ News_count + DF_E + Commodity+ DF_E:Commodity+ sales+ net_income+ ni_be + ope_be+ debt_bev+ cash_lt+ lt_ppen+ age, data = CDP_TRASE4, Hess = TRUE)
+summary(mod)
+
+#p value
+(ctable <- coef(summary(mod)))
+p <- pnorm(abs(ctable[, "t value"]), lower.tail = FALSE) * 2
+
+#95%CI
+(ctable <- cbind(ctable, "p value" = p))
+confint.default(mod)
+
+
+lmm_model18 <- lmer(Score2~ News_count + DF_E + Commodity+ DF_E:Commodity+ sales+ net_income+ ni_be + ope_be+ debt_bev+ cash_lt+ lt_ppen+ age +(1|Sector),data = CDP_TRASE4)
+summary(lmm_model18)
+
+
+# Getting Specific issue scores=============================
+#MSCI
+setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Data/MSCI_2013-2020")
+MSCI_ISSUE<- read.csv("MSCI_key_issue_score.csv")
+
+# Function to check if a value is missing (handles multiple "NA" cases)
+is_missing <- function(x) {
+  is.null(x) || is.na(x) || is.nan(x)
 }
 
-coef_IAS1 <- extract_coefficients(IAS_cap.con1, "Industry_Adjusted_Score", "MSCI")
-coef_WAS1 <- extract_coefficients(WAS_cap.con1, "Weighted_Average_Score", "MSCI")
-coef_E1<- extract_coefficients(E_cap.con1, "E_score", "MSCI")
-coef_S1<- extract_coefficients(S_cap.con1, "S_score", "MSCI")
-coef_G1 <- extract_coefficients(G_cap.con1, "G_score", "MSCI")
+#Whole MSCI issue dataset
+# Calculate proportion of non-missing responses for each question
+result <- MSCI_ISSUE %>%
+  summarise(across(9:23, ~ mean(!sapply(.x, is_missing), na.rm = TRUE))) %>%
+  pivot_longer(everything(), names_to = "question", values_to = "Not_NA_proportion")
 
-coef_all <- rbind(coef_IAS1, coef_WAS1, coef_E1, coef_S1, coef_G1)
+setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Consolidated data/EX_IM merge")
+MSCI_TRASE3<- read.csv("MSCI_TRASE3.csv")
 
-coef_all$model<- paste0(coef_all$response)
+#merge with MSCI-TRASE
+MSCI_ISSUE2<- MSCI_ISSUE[,-c(2,3,4,5,7)]
+MSCI_ISSUE2$Rating_year<- substr(MSCI_ISSUE2$AS_OF_DATE,1,4)
+MSCI_ISSUE2$Rating_year<- as.integer(MSCI_ISSUE2$Rating_year)
 
-coef_all$significance <- ifelse(coef_all$p_value < 0.05, "significant", "not significant")
+colnames(MSCI_ISSUE2)[1]<-  "Issuer_Name"
+colnames(MSCI_ISSUE2)[2]<-  "Issuer_ISIN"
 
-coef_all2 <- coef_all %>%
-  mutate(p_value_category = case_when(
-    p_value > 0.05 ~ "p > 0.05",
-    p_value > 0.01 & p_value <= 0.05 ~ "0.01 < p ≤ 0.05",
-    p_value <= 0.01 ~ "p ≤ 0.01"
-  ))
+MSCI_ISSUE2$Issuer_ISIN <- trimws(MSCI_ISSUE2$Issuer_ISIN)
+MSCI_TRASE3$Issuer_ISIN <- trimws(MSCI_TRASE3$Issuer_ISIN)
 
-coef_all2 <- coef_all %>%
-  mutate(p_value_category = case_when(
-    p_value >= 0.05 ~ "p >= 0.05",
-    p_value < 0.05 ~ "p < 0.05"
-  ))
+unique(MSCI_ISSUE2$AS_OF_DATE)
 
-coef_all3<- coef_all2
-coef_all3$DE<- "t"
-coef_all3<- coef_all3[,c(7,5,1,2,3,4,9,8,6,10)]
-setwd("E:/PhD Research/Chapter 2 - Reanalysis/R codes 2")
-write.csv(coef_all3,"LMM_results_MSCI_rating year_t2.csv")
+MSCI_ISSUE3 <- MSCI_ISSUE2 %>%
+  group_by(Issuer_Name) %>% 
+  summarise(across(3:17, ~mean(.x, na.rm = TRUE), .names = "Mean_{.col}"))
 
+MSCI_TRASE4<- left_join(MSCI_TRASE3,MSCI_ISSUE3, by = "Issuer_Name")
 
-library(tidyverse)
-library(dotwhisker)
-library(gapminder)
+#S&P Global
+setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Data/S & P Global")
+SP_question<-read.csv("SP_question_score.csv")
 
+#assessment year is different
+SP_question2<- SP_question %>% group_by(institutionid, questionname,assessmentyear) %>%
+  summarise(mean.questionscore = mean(questionscore, na.rm=T))
 
-coef_all3 <- coef_all3 %>%
-  mutate(
-    conf.low = estimate - (1.96 * std_Error),
-    conf.high = estimate + (1.96 * std_Error)
-  )
+SP_question2_wide<- pivot_wider(SP_question2, names_from = "questionname", values_from =  "mean.questionscore")
+colnames(SP_question2_wide)[2]<- "Rating_year"
 
+# Calculate proportion of non-missing responses for each question
+SP_result_q <- SP_question2_wide %>%
+  ungroup() %>%  # Remove any grouping
+  summarise(across(3:18, ~ mean(!sapply(.x, is_missing), na.rm = TRUE))) %>%
+  pivot_longer(cols = everything(), names_to = "question", values_to = "Not_NA_proportion")
 
-#coef_all3<- coef_all3 %>% rename(model = label)
+#merge with S&P_TRASE
+setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Consolidated data/EX_IM merge")
+SP_TRASE3<- read.csv("SP_TRASE3.csv")
 
-setwd("E:/PhD Research/Chapter 2 - Reanalysis/R codes 2")
-write.csv(coef_all3,"LMM_results_MSCI_rating year_t.csv")
+SP_question2_wide$institutionid <- trimws(SP_question2_wide$institutionid )
+SP_TRASE3$institutionid <- trimws(SP_TRASE3$institutionid)
 
-coef_all3$p_value_category<- as.factor(coef_all3$p_value_category)
-coef_all4<-coef_all3[!(coef_all3$term  %in% c("Deforestation:pork","pork")),]
-
-dwplot(coef_all4, vline = ggplot2::geom_vline(xintercept = 0,
-                                              colour = "grey90",
-                                              linetype = 1,
-                                              size = 0.5),
-       dot_args = list(aes(shape = p_value_category), size = 1.8),
-       whisker_args = list(aes(col= model, linetype = p_value_category))
-) + 
-  theme_classic() + 
-  xlab("Coefficient estimates") + 
-  scale_color_manual(values = c("red3","orange3","dodgerblue1","#009E73", "darkorchid1")) +
-  scale_shape_manual(values = c(16, 1, 4)) +
-  scale_linetype_manual(values = c("p < 0.05" = 1, "p >= 0.05" = 3)) +
-  guides(
-    colour = guide_legend("Model"),
-    linetype = guide_legend("Significance"),
-    shape = guide_legend("Significance")
-  ) + # Combine the legends for shape and color 
-  theme(
-    axis.text.y = element_text(size = 14),
-    plot.title = element_text(face = "bold"),
-    legend.position = c(0.8, 1),
-    legend.justification = c(1, 1),
-    legend.key.size = unit(0.8, "cm"),  # Increase legend key size
-    legend.text = element_text(size = 10),  # Increase text size
-    legend.title = element_text(size = 12, face = "bold"),
-    legend.background = element_rect(colour = "grey80"),
-  )
+SP_TRASE4<- left_join(SP_TRASE3,SP_question2_wide, by = c("institutionid","Rating_year"))
 
 
-#Sustainalytics==============================
-#The ESG scores are: ESG risk score, managed risk score and overall risk exposure
+#Sustaianlytics
+setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Data/Sustainalytics_2018-2023")
+Sus_bio <- read_parquet("sus_bio.parquet.gzip")
+unique(Sus_bio$FieldId)
+Sus_bio$FieldId<- as.character(Sus_bio$FieldId)
 
-Sustainalytics_0<- read.csv("Sustain_TRASE_same year2.csv")
-length(unique(Sustainalytics_0$Common_name))  #139 companies initially
+Sustain_issue_score_all<- read.csv("Sustain_issue_score_all.csv" )
+Sustain_issue_score_all<- Sustain_issue_score_all[!(duplicated(Sustain_issue_score_all)),]
+Sustain_issue_score_all$FieldId<- as.character(Sustain_issue_score_all$FieldId)
 
-##Exluded companies missing market capitalisation
-Sustainalytics1.1<- Sustainalytics_0[!(is.na(Sustainalytics$Market_Capital)),]
-length(unique(Sustainalytics1.1$Common_name)) #114
+Sus_bio<- Sus_bio%>% left_join(Sustain_issue_score_all,  by = "FieldId")
 
-#market capitalisation in the unit of billion
-Sustainalytics1.1$Market_Capital_B<- Sustainalytics1.1$Market_Capital/(10^9)
-length(unique(Sustainalytics1.1$Common_name)) #107 
+Sus_bio_score<- Sus_bio[Sus_bio$FieldName %in% c("E.1.2.1 Biodiversity Programmes-Raw Score-RR" , "E.1.2.9 Deforestation Policy-Raw Score-RR","E.1.2.10 Deforestation Programme-Raw Score-RR" ,"E.1.2.1 Biodiversity Programmes-Weight-Consolidated-RR" ,"E.1.2.1 Biodiversity Programmes-Weighted Score-Consolidated-RR","E.1.2.9 Deforestation Policy-Weight-Consolidated-RR" , "E.1.2.10 Deforestation Programme-Weight-Consolidated-RR","E.1.2.9 Deforestation Policy-Weighted Score-Consolidated-RR","E.1.2.10 Deforestation Programme-Weighted Score-Consolidated-RR"),]
 
-Sustainalytics1.1$DF_E<- Sustainalytics1.1$DF_E/1000
+Sus_bio_score4<- Sus_bio_score %>% group_by(EntityId, FieldName)  %>%
+  summarise(FieldValue = mean(FieldValue))
 
-Sustainalytics1.1<- Sustainalytics1.1 %>% rename(Deforestation = DF_E) %>% rename(Market_Capitalisation = Market_Capital_B)
+Sus_bio_score5<- Sus_bio_score4 %>% pivot_wider(names_from = FieldName, values_from = FieldValue)
 
-#The dataset Sustainalytics1.1 had a sample size of 221 firm-years, including 107 distinct companies from 33 subindustries and 9 sectors
+#setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Consolidated data/EX_IM merge")
+Sustain_TRASE3<- read.csv("Sustain_TRASE3.csv")
 
-#Model
-lmer_model2 <- function(data, response) {
-  
-  model_formula <- as.formula(paste0("scale(",response, ") ~  scale(Market_Capitalisation)*scale(Deforestation) + scale(Deforestation)*Commodity + (1|Year_Sustain)  + (1|Subindustry/Common_name)"))
-  model <- lmer(model_formula, data = data)
-  
-  return(model)
-}
+Sus_bio_score5$EntityId <- trimws(Sus_bio_score5$EntityId)
+Sustain_TRASE3$EntityId <- trimws(Sustain_TRASE3$Entity_ID)
 
-ESG_risk.con1<- lmer_model2(Sustainalytics1.1, "ESG_risk")
-Managed_risk.con1<- lmer_model2(Sustainalytics1.1, "Managed_Risk")
-Overall_exposure.con1<-lmer_model2(Sustainalytics1.1, "Overall_Exposure")
-
-visreg(Overall_exposure.con1, "Deforestation", by="Market_Capitalisation", breaks=3)
-visreg(Overall_exposure.con1, "Deforestation", by="Commodity", overlay=TRUE)
-#also applied to other responses variables to create Interaction plots
+Sus_bio_score5$EntityId<- as.character(Sus_bio_score5$EntityId)
+Sustain_TRASE3$EntityId<- as.character(Sustain_TRASE3$EntityId)
 
 
-extract_coefficients <- function(model, response) {
-  coef_summary <- summary(model)$coefficients
-  coef_df <- data.frame(
-    term = rownames(coef_summary),
-    estimate = coef_summary[, "Estimate"],
-    std_Error= coef_summary[, "Std. Error"],
-    p_value = coef_summary[, "Pr(>|t|)"],
-    response = response
-  )
-  return(coef_df)
-}
+Sustain_TRASE4.0<- left_join(Sustain_TRASE3,Sus_bio_score5, by = c("EntityId"))
 
-
-# Define the function
-create_coefficient_plot <- function(model, response_var) {
-  # Extract coefficients
-  coef_data <- extract_coefficients(model, response_var)
-  coef_data <- data.frame(coef_data)
-  
-  # Add additional columns
-  coef_data$model <- paste0(coef_data$response)
-  coef_data$significance <- ifelse(coef_data$p_value < 0.05, "significant", "not significant")
-  
-  coef_data <- coef_data %>%
-    mutate(p_value_category = case_when(
-      p_value >= 0.05 ~ "p >= 0.05",
-      p_value < 0.05 ~ "p < 0.05"
-    ))
-  
-  coef_data$direction <- ifelse(coef_data$estimate > 0, "positive", "negative")
-  
-  # Convert columns to factors
-  coef_data$p_value_category <- as.factor(coef_data$p_value_category)
-  coef_data$significance <- as.factor(coef_data$significance)
-  coef_data$direction <- as.factor(coef_data$direction)
-  
-  # Define the levels for the term factor
-  coef_data$term <- factor(coef_data$term, levels = c(
-    "scale(DF_E):Commoditywood pulp", "scale(DF_E):Commoditysoy", 
-    "scale(DF_E):Commoditypalm oil", "scale(DF_E):Commoditypork", 
-    "scale(DF_E):Commoditychicken", "scale(Market_Capital_B):scale(DF_E)", 
-    "Commoditywood pulp", "Commoditysoy", "Commoditypalm oil", 
-    "Commoditypork", "Commoditychicken", "scale(DF_E)", 
-    "scale(Market_Capital_B)", "(Intercept)"
-  ))
-  
-  # Create the plot
-  plot <- ggplot(coef_data, aes(x = estimate, y = term, color = direction)) +
-    geom_point(aes(shape = p_value_category), size = 3) +
-    geom_errorbarh(aes(xmin = estimate - std_Error, xmax = estimate + std_Error, 
-                       linetype = p_value_category), height = 0.2) +
-    theme_classic() +
-    xlab("Coefficient estimates") +
-    ylab("") +
-    scale_color_manual(values = c("positive" = "#CC3333", "negative" = "#3366CC")) +
-    scale_shape_manual(values = c("p < 0.05" = 16, "p >= 0.05" = 1)) +
-    scale_linetype_manual(values = c("p < 0.05" = 1, "p >= 0.05" = 3)) +
-    guides(
-      colour = guide_legend("Direction"),
-      linetype = guide_legend("p-value category"),
-      shape = guide_legend("p-value category")
-    ) + 
-    geom_vline(xintercept = 0, colour = "grey90", linetype = 1, size = 0.5) +
-    theme(
-      axis.text.y = element_text(size = 12),
-      plot.title = element_text(face = "bold"),
-      legend.position = "bottom",
-      legend.justification = c(1, 1),
-      legend.background = element_rect(colour = "grey80")
-    )
-  
-  return(plot)
-}
-
-plot_ESG_risk <- create_coefficient_plot(ESG_risk.con1, "ESG_risk")
-plot_Managed_risk <- create_coefficient_plot(Managed_risk.con1, "Managed_Risk")
-plot_Overall_exposure <- create_coefficient_plot(Overall_exposure.con1, "Overall_Exposure")
-
-
-#Figure 2
-extract_coefficients <- function(model, response) {
-  coef_summary <- summary(model)$coefficients
-  coef_df <- data.frame(
-    term = rownames(coef_summary),
-    estimate = coef_summary[, "Estimate"],
-    std_Error= coef_summary[, "Std. Error"],
-    p_value = coef_summary[, "Pr(>|t|)"],
-    response = response
-  )
-  return(coef_df)
-}
-
-coef_ESG_risk1 <- extract_coefficients(ESG_risk.con1, "ESG_risk")
-coef_managed_risk1 <- extract_coefficients(Managed_risk.con1, "Managed_Risk")
-coef_overall_exposure1<- extract_coefficients(Overall_exposure.con1, "Overall_Exposure")
-
-coef_all <- rbind(coef_ESG_risk1, coef_managed_risk1, coef_overall_exposure1)
-
-coef_all$label <- paste0(coef_all$response)
-
-coef_all$significance <- ifelse(coef_all$p_value < 0.05, "significant", "not significant")
-
-coef_all2 <- coef_all %>%
-  mutate(p_value_category = case_when(
-    p_value >= 0.05 ~ "p >= 0.05",
-    p_value < 0.05 ~ "p < 0.05"
-  ))
-
-coef_all3<- coef_all2
-coef_all3$DE<- "t"
-coef_all3<- coef_all3[,c(7,5,1,2,3,4,9,8,6,10)]
-setwd("E:/PhD Research/Chapter 2 - Reanalysis/R codes 2")
-write.csv(coef_all3,"LMM_results_Sustain_rating year_t.csv")
-
-coef_all3 <- coef_all3 %>%
-  mutate(
-    conf.low = estimate - (1.96 * std_Error),
-    conf.high = estimate + (1.96 * std_Error)
-  )
-
-
-coef_all3$p_value_category<- as.factor(coef_all3$p_value_category)
-
-coef_all4<-coef_all3[!(coef_all3$term  %in% c("Deforestation:pork","pork")),]
-
-dwplot(coef_all4, vline = ggplot2::geom_vline(xintercept = 0,
-                                              colour = "grey90",
-                                              linetype = 1,
-                                              size = 0.5),
-       dot_args = list(aes(shape = p_value_category), size = 2),
-       whisker_args = list(aes(col= model, linetype = p_value_category))
-) + 
-  theme_classic() + 
-  xlab("Coefficient estimates") + 
-  scale_color_manual(values = c("violetred","orange3","deepskyblue")) +
-  scale_shape_manual(values = c(16, 1, 4)) +
-  scale_linetype_manual(values = c("p < 0.05" = 1, "p >= 0.05" = 3)) +
-  guides(
-    colour = guide_legend("Model"),
-    linetype = guide_legend("Significance"),
-    shape = guide_legend("Significance")
-  ) + # Combine the legends for shape and color 
-  theme(
-    axis.text.y = element_text(size = 14),
-    plot.title = element_text(face = "bold"),
-    legend.position = c(0.94,0.03),
-    legend.justification = c(0.8, 0),
-    legend.key.size = unit(0.5, "cm"),  # Increase legend key size
-    legend.text = element_text(size = 11),  # Increase text size
-    legend.title = element_text(size = 11, face = "bold"),
-    legend.background = element_rect(colour = "grey80"),
-  )
-
+#The regression analyses for these datasets are similar as above
