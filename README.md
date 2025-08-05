@@ -16,7 +16,8 @@ install.packages(c("lme4", "lmtest", "lmerTest", "visreg", "sjPlot", "ggplot2",
   "dplyr", "tidyr", "lattice", "usdm", "Hmisc", "DHARMa"))
 
 #Demo
-Instructions to run on data – apply the codes to the simulated datasets for demo 
+Instructions to run on data – apply the codes to the simulated datasets for demo step-by-step
+
 Expected output: 
 The result of the linear mixed-effects model on the effects of deforestation-related news counts and deforestation exposure on the overall Analyst View of Sustainalytics
 The result of the linear mixed-effects model on the effects of deforestation-related news counts and deforestation exposure on specific issue scores from MSCI
@@ -25,6 +26,7 @@ The result of the ordinal logistic model on the effects of deforestation-related
 
 The demo is expected to complete within a few minutes on a standard desktop or laptop computer
 #Instructions for use
+
 Please refer to the methods section in the manuscript
 
 Please refer to the manuscript for more information on the methods and data availability of ESG scores from five commercial ESG providers, i.e., Morgan Stanley Capital International (MSCI), Sustainalytics, Refinitiv, S&P Global and Carbon Disclosure Project (CDP), and firm-level deforestation exposure measures from Transparency for Sustainable Economies (TRASE) platform
