@@ -1,19 +1,18 @@
+#Corporate ESG scores fail to capture actual deforestation exposure
+
 #Load the R package
 library(dplyr)
 library(tidyr)
-require(usdm)
-require(lme4)  
-require(lmtest)
-require(lmerTest)
-library(visreg)
-require(ggplot2)
-require(MASS)
+library(usdm)
+library(lme4)  
+library(lmtest)
+library(lmerTest)
+library(ggplot2)
+library(MASS)
 library(DHARMa)
 library(performance)
-library(MuMIn)
-library(marginaleffects)
 
-
+#Effects of deforestation exposure and news on the probability of mentioning deforestation in analyst view
 setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Consolidated data/Overall Analyst View")
 DEview_news_financial<- read.csv("All_matched_company_info_DE_view_merge news_financial.csv")
 
@@ -30,10 +29,9 @@ explanatory_vars <- DEview_news_financial[, c("mean_news_count", "mean_DF_E",
                                               "ope_be", "debt_bev", "cash_lt",
                                               "lt_ppen", "debt_at", "age","me")]
 
-require(usdm)
 usdm::vif(explanatory_vars)
 
-#exclude variable interatively
+#exclude variable iteratively
 explanatory_vars <- DEview_news_financial[, c("mean_news_count", "mean_DF_E", 
                                               "assets", "sales", "ni_be", "debt_bev", "cash_lt", "age")]
 
@@ -61,12 +59,10 @@ testOutliers(sim_residuals)
 
 #Effects of deforestation exposure and deforestation-related news on ESG scores=============================
 
-#MSCI----------------------------
+#MSCI
 setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Consolidated data/EX_IM merge_merge JKP financial updated")
 MSCI_TRASE<- read.csv("MSCI_TRASE4_news.csv")
 names(MSCI_TRASE)
-
-MSCI_TRASE2 <- dplyr::select(MSCI_TRASE, -Issuer_Name, -Issuer_ISIN, -Industry, -Mark.Cap_type,-Rating_month, -Market_Capital)
 
 #Check multilinearity
 explanatory_vars <- MSCI_TRASE2[, c( "News_count","DF_E", "assets", "sales", "book_equity","net_income", "enterprise_value", "ni_be", "ope_be", "debt_bev", "cash_lt","lt_ppen", "debt_at", "age","me")]
@@ -113,9 +109,6 @@ summary(lmm_model1)
 
 analyze_lmm(lmm_model1)
 
-avg_slopes(lmm_model1,
-           variables = "DF_E",
-           by = "Commodity")
 
 #Weighted Average Key Issue Score (WAKIS)
 lmm_model2 <- lmer(Weighted_Average_Score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
@@ -148,161 +141,12 @@ saveRDS(lmm_model3, "E score - DE + news + financial_2013-2020.rds")
 saveRDS(lmm_model4, "S score - DE + news + financial_2013-2020.rds")
 saveRDS(lmm_model5, "G score - DE + news + financial_2013-2020.rds")
 
-#Sustainalytics---------------------------------
-setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Consolidated data/EX_IM merge_merge JKP financial updated")
-Sustain_TRASE<- read.csv("Sustain_TRASE4_news.csv")
+# The analyses for Sustainalytics, Refinitiv, S&P Global and CDP are similar
 
 
-Sustain_TRASE2 <- dplyr::select(Sustain_TRASE, -Entity_ID, -Entity_name,-Month_Sustain, -Issuer_ISIN, -Region,-Industry, -Market_Capital,-MC_type)
-
-#Check multilinearity
-explanatory_vars <- Sustain_TRASE2[, c( "News_count","DF_E", "assets", "sales", "book_equity","net_income", "enterprise_value", "ni_be", "ope_be", "debt_bev", "cash_lt","lt_ppen", "debt_at", "age","me")]
-
-vif(explanatory_vars)
-
-#The updated one
-explanatory_vars <- Sustain_TRASE2[, c( "News_count","DF_E", "assets", "sales", "ni_be", "ope_be", "cash_lt", "debt_at", "age","me")]
-
-Sustain_TRASE4<- Sustain_TRASE2 %>%   mutate(across(c(19,22:36), 
-                                                    ~ as.numeric(scale(.x)), 
-                                                    .names = "{.col}"))
-
-#Unmanged risk score
-lmm_model6 <- lmer(ESG_risk~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
-                       assets+ sales + ni_be + ope_be + cash_lt + debt_at+ age + me+
-                       (1|Sector)+(1|Country_trade),data = Sustain_TRASE4)
-summary(lmm_model6)
-
-
-shapiro.test(Sustain_TRASE4$Managed_Risk) #Not normal
-Sustain_TRASE4$sqrt_Managed_Risk<- sqrt(Sustain_TRASE4$Managed_Risk)
-shapiro.test(Sustain_TRASE4$sqrt_Managed_Risk)
-
-#Manged risk score
-lmm_model7 <- lmer(sqrt_Managed_Risk~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
-                       assets+ sales + ni_be + ope_be + cash_lt + debt_at+ age + me+
-                       (1|Sector),data = Sustain_TRASE4)
-summary(lmm_model7)
-
-#Overall risk exposure
-lmm_model8 <- lmer(Overall_Exposure~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
-                       assets+ sales + ni_be + ope_be + cash_lt + debt_at+ age + me+
-                       (1|Sector),data = Sustain_TRASE4)
-summary(lmm_model8)
-
-setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Analysis/Full Model - Effects of deforestation on ESG scores/Full model_updated with ADM and me")
-saveRDS(lmm_model6, "Unmanaged risk - DE + news + financial_2013-2020.rds")
-saveRDS(lmm_model7, "Managed risk - DE + news + financial_2013-2020.rds")
-saveRDS(lmm_model8, "Risk exposure - DE + news + financial_2013-2020.rds")
-
-#Refinitiv-----------------------------
-setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Consolidated data/EX_IM merge_merge JKP financial updated")
-Refinitiv_TRASE<- read.csv("Refinitiv_TRASE4_news.csv")
-Refinitiv_TRASE2 <- dplyr::select(Refinitiv_TRASE, -Company_name, -Issuer_ISIN,-Industry)
-
-explanatory_vars <- Refinitiv_TRASE2[, c( "News_count","DF_E", "assets", "sales", "book_equity","net_income", "enterprise_value", "ni_be", "ope_be", "debt_bev", "cash_lt","lt_ppen", "debt_at", "age","me")]
-
-vif(explanatory_vars)
-
-explanatory_vars <- Refinitiv_TRASE2[, c( "News_count","DF_E", "sales","net_income", "ni_be", "ope_be", "debt_bev", "cash_lt","lt_ppen", "debt_at", "age")]  # all below 3, updated
-
-Refinitiv_TRASE4<- Refinitiv_TRASE2 %>%   mutate(across(c(9, 18:32), 
-                                                        ~ as.numeric(scale(.x)), 
-                                                        .names = "{.col}"))
-
-#ESGC score
-lmm_model9 <- lmer(ESGC_score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
-                       sales + net_income+ni_be+ope_be+debt_bev+cash_lt+lt_ppen+debt_at+age+
-                       (1|Sector),data = Refinitiv_TRASE4)
-summary(lmm_model9)
-
-#ESG score
-lmm_model10 <- lmer(ESG_score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
-                       sales + net_income+ni_be+ope_be+debt_bev+cash_lt+lt_ppen+debt_at+age+
-                       (1|Sector),data = Refinitiv_TRASE4)
-summary(lmm_model10)
-
-#E score
-lmm_model11<- lmer(E_score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
-                       sales + net_income+ni_be+ope_be+debt_bev+cash_lt+lt_ppen+debt_at+age+
-                       (1|Sector),data = Refinitiv_TRASE4)
-summary(lmm_model11)
-
-#S score
-lmm_model12 <- lmer(S_score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
-                       sales + net_income+ni_be+ope_be+debt_bev+cash_lt+lt_ppen+debt_at+age+
-                       (1|Sector),data = Refinitiv_TRASE4)
-summary(lmm_mode12)
-
-#G score
-lmm_model13 <- lmer(G_score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
-                       sales + net_income+ni_be+ope_be+debt_bev+cash_lt+lt_ppen+debt_at+age+
-                       (1|Sector),data = Refinitiv_TRASE4)
-summary(lmm_model13)
-
-setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Analysis/Full Model - Effects of deforestation on ESG scores/Full model_updated with ADM and me")
-saveRDS(lmm_model9, "Refinitiv_ESGC score - DE + news + financial_2013-2020.rds")
-saveRDS(lmm_model10, "Refinitiv_ESG score - DE + news + financial_2013-2020.rds")
-saveRDS(lmm_model11, "Refinitiv_E score - DE + news + financial_2013-2020.rds")
-saveRDS(lmm_model12, "Refinitiv_S score - DE + news + financial_2013-2020.rds")
-saveRDS(lmm_model13, "Refinitiv_G score - DE + news + financial_2013-2020.rds")
-
-
-#S&P global---------------------
-setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Consolidated data/EX_IM merge_merge JKP financial updated")
-SP_TRASE<- read.csv("SP_TRASE4_news.csv")
-
-explanatory_vars <- SP_TRASE2[, c( "News_count","DF_E", "assets", "sales", "book_equity","net_income", "enterprise_value", "ni_be", "ope_be", "debt_bev", "cash_lt","lt_ppen", "debt_at", "age","me")]
-
-vif(explanatory_vars)
-
-explanatory_vars <- SP_TRASE2[, c( "News_count","DF_E", "sales","net_income", "ni_be", "ope_be", "debt_bev", "cash_lt","lt_ppen", "debt_at", "age")] # all below 3
-
-SP_TRASE4<- SP_TRASE2 %>%   mutate(across(c(13,16:30), 
-                                          ~ as.numeric(scale(.x)), 
-                                          .names = "{.col}"))
-
-shapiro.test(SP_TRASE4$ESG_score) 
-SP_TRASE4$sqrt_ESG_score<- sqrt(SP_TRASE4$ESG_score)
-lmm_model14<- lmer(sqrt_ESG_score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
-                     sales + net_income+ ni_be + ope_be + debt_bev+ cash_lt + lt_ppen + debt_at+ age +
-                     (1|Sector),data = SP_TRASE4)
-summary(lmm_model14)
-
-shapiro.test(SP_TRASE4$E_score) 
-SP_TRASE4$sqrt_E_score<- sqrt(SP_TRASE4$E_score)
-lmm_model115 <- lmer(sqrt_E_score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
-                     sales + net_income+ ni_be + ope_be + debt_bev+ cash_lt + lt_ppen + debt_at+ age +
-                     (1|Sector),data = SP_TRASE4)
-summary(lmm_model15)
-
-shapiro.test(SP_TRASE4$S_score) 
-SP_TRASE4$sqrt_S_score<- sqrt(SP_TRASE4$S_score)
-lmm_model16 <- lmer(sqrt_S_score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
-                     sales + net_income+ ni_be + ope_be + debt_bev+ cash_lt + lt_ppen + debt_at+ age +
-                     (1|Sector),data = SP_TRASE4)
-summary(lmm_model16)
-
-
-shapiro.test(SP_TRASE4$G_score) 
-SP_TRASE4$sqrt_G_score<- sqrt(SP_TRASE4$G_score)
-lmm_model17<- lmer(sqrt_G_score~ News_count + DF_E+ Commodity + DF_E: Commodity+ 
-                     sales + net_income+ ni_be + ope_be + debt_bev+ cash_lt + lt_ppen + debt_at+ age +
-                     (1|Sector),data = SP_TRASE4)
-summary(lmm_model17)
-
-
-setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Analysis/Full Model - Effects of deforestation on ESG scores/Full model_updated with ADM and me")
-saveRDS(lmm_model14, "SP_ESG score - DE + news + financial_2013-2020.rds")
-saveRDS(lmm_model15, "SP_E score - DE + news + financial_2013-2020.rds")
-saveRDS(lmm_model16, "SP_S score - DE + news + financial_2013-2020.rds")
-saveRDS(lmm_model17, "SP_G score - DE + news + financial_2013-2020.rds")
-
-#CDP--------------------------------
+#CDP
 setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Consolidated data/EX_IM merge_merge JKP financial updated")
 CDP_TRASE<- read.csv("CDP_TRASE4_news.csv")
-
-CDP_TRASE2 <- dplyr::select(CDP_TRASE, -Organisation.name, -Issuer_ISIN,-Ticker,-Primary.activity,-Primary.sector, -Primary.industry)
 
 #Check multilinearity
 explanatory_vars <- CDP_TRASE2[, c( "News_count","DF_E", "assets", "sales", "book_equity","net_income", "enterprise_value", "ni_be", "ope_be", "debt_bev", "cash_lt","lt_ppen", "debt_at", "age","me")]
@@ -336,7 +180,7 @@ lmm_model18 <- lmer(Score2~ News_count + DF_E + Commodity+ DF_E:Commodity+ sales
 summary(lmm_model18)
 
 
-# Getting Specific issue scores=============================
+# Effects of deforestation exposure and news on deforestation-related issue scores
 #MSCI
 setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Data/MSCI_2013-2020")
 MSCI_ISSUE<- read.csv("MSCI_key_issue_score.csv")
@@ -373,6 +217,71 @@ MSCI_ISSUE3 <- MSCI_ISSUE2 %>%
   summarise(across(3:17, ~mean(.x, na.rm = TRUE), .names = "Mean_{.col}"))
 
 MSCI_TRASE4<- left_join(MSCI_TRASE3,MSCI_ISSUE3, by = "Issuer_Name")
+
+write.csv(MSCI_TRASE4, "MSCI_key issue score and DE_updated.csv")
+
+
+MSCI_key_issue_mean<- read.csv("MSCI_key issue score and DE_updated.csv")
+
+
+MSCI_key_issue_mean$Common_Name<- as.factor(MSCI_key_issue_mean$Common_Name)
+MSCI_key_issue_mean$Country<- as.factor(MSCI_key_issue_mean$Country)
+MSCI_key_issue_mean$Sector<- as.factor(MSCI_key_issue_mean$Sector)
+
+# Create a dataframe with just the explanatory variables
+explanatory_vars <- MSCI_key_issue_mean[, c( "mean_news_count","mean_DF_E", "assets", "sales", "book_equity","net_income", "enterprise_value", "ni_be", "ope_be", "debt_bev", "cash_lt","lt_ppen", "debt_at", "age","me")]
+
+vif(explanatory_vars)
+
+explanatory_vars <- MSCI_key_issue_mean[, c( "mean_news_count","mean_DF_E", "assets", "sales", "ope_be", "cash_lt","lt_ppen", "debt_at", "age")]
+
+names(MSCI_key_issue_mean)
+MSCI_key_issue_mean2<- MSCI_key_issue_mean[,c(1,2,3,5,11,12,18,13,19,20,26,28:31)]
+
+#Standardization
+MSCI_key_issue_mean3<- MSCI_key_issue_mean2 %>%   mutate(across(c(7:15), 
+                                                                ~ as.numeric(scale(.x)), 
+                                                                .names = "{.col}"))
+
+
+#Pearson correlation between key issue scores, DE and news
+library(Hmisc)  # For rcorr function
+# Compute correlation matrix and p-values
+
+cor_results <- rcorr(as.matrix(MSCI_key_issue3[, 5:15]), type = "pearson")
+
+df1 <- as.data.frame(cor_results$r)
+df2 <- as.data.frame(cor_results$P)
+
+shapiro.test(MSCI_key_issue_mean3$Mean_BIODIV_LAND_USE_EXP_SCORE) #Not normally distributed
+MSCI_key_issue_mean3$log_bioland_exposure <- log(MSCI_key_issue_mean3$Mean_BIODIV_LAND_USE_EXP_SCORE)
+shapiro.test(MSCI_key_issue_mean3$log_bioland_exposure)
+
+shapiro.test(MSCI_key_issue_mean3$Mean_CARBON_EMISSIONS_EXP_SCORE) #Not normally distributed
+
+
+lmm_model3 <- lmer(log_bioland_exposure ~ mean_news_count + mean_DF_E +
+                     # standardized control variables
+                     assets+ sales + ope_be + cash_lt + lt_ppen+ debt_at+ age +
+                     (1|Country) +(1|Sector),
+                   data = MSCI_key_issue_mean3)
+summary(lmm_model3)
+
+plot(lmm_model4)
+qqmath(lmm_model4,lty=2)
+
+lmm_model4 <- lmer(Mean_CARBON_EMISSIONS_EXP_SCORE ~ mean_news_count + mean_DF_E +
+                     # standardized control variables
+                     assets+ sales + ope_be + cash_lt + lt_ppen+ debt_at+ age +
+                     (1|Country) +(1|Sector),
+                   data = MSCI_key_issue_mean3)
+summary(lmm_model4)
+
+setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Analysis/Effects of news on key issue scores (MSCI and SP)")
+saveRDS(lmm_model3,"MSCI_Biodiversity_exposure_score - DE + news + financial_all average.rds")
+saveRDS(lmm_model4,"MSCI_Climate_exposure_score - DE + news + financial_all average.rds")
+
+
 
 #S&P Global
 setwd("E:/PhD Research/Chapter 2 - Reanalysis for Nat Sustain/Data/S & P Global")
